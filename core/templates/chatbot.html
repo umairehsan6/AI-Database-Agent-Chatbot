@@ -1,0 +1,338 @@
+{% extends "base.html" %}
+{% block title %}AI Assistant{% endblock %}
+
+{% block content %}
+<div class="flex h-screen bg-white overflow-hidden">
+    {% include "sidebar.html" %}
+    
+    <!-- Main Chat Area -->
+    <div class="flex-1 flex flex-col">
+        
+        <!-- Header (Sticky) -->
+        <div class="bg-white border-b border-gray-200 px-4 lg:px-6 py-4 flex items-center justify-between flex-shrink-0">
+            <div class="flex items-center gap-3">
+                <div class="w-10 h-10 bg-gradient-to-br from-purple-500 to-pink-500 rounded-lg flex items-center justify-center">
+                    <span class="text-white text-xl">🤖</span>
+                </div>
+                <div>
+                    <h1 class="text-gray-800 font-semibold text-lg">AI Database Assistant</h1>
+                    <p class="text-gray-500 text-sm">Made by Umair Ehsan</p>
+                </div>
+            </div>
+            <button onclick="clearChat()" class="px-4 py-2 bg-gray-100 hover:bg-gray-200 text-gray-700 rounded-lg transition text-sm">
+                Clear Chat
+            </button>
+        </div>
+        
+        <!-- Messages Container (Scrollable) -->
+        <div id="messages-container" class="flex-1 overflow-y-auto bg-gray-50 px-2 lg:px-4 py-6 min-h-0">
+            <div class="max-w-3xl mx-auto space-y-6">
+                <!-- Welcome Message -->
+                <div class="flex gap-4 items-start">
+                    <div class="w-8 h-8 bg-gradient-to-br from-purple-500 to-pink-500 rounded-lg flex items-center justify-center flex-shrink-0">
+                        <span class="text-white text-sm">🤖</span>
+                    </div>
+                    <div class="flex-1">
+                        <div class="text-gray-800">
+                            <p class="mb-3">Hello! I'm your AI Database Assistant. I can help you manage users with natural language commands.</p>
+                            <p class="text-gray-600 text-sm">Try commands like:</p>
+                            <ul class="text-gray-600 text-sm mt-2 space-y-1">
+                                <li>• "List all users"</li>
+                                <li>• "Search users by any parameter"</li>
+                                <li>• "Show all users from Chicago"</li>
+                                <li>• "Create user john123 with email john@test.com"</li>
+                                <li>• "Update user alice99 city to New York"</li>
+                                <li>• "Delete user with username olduser"</li>
+                                <li>• "Get user details for user123"</li>
+
+                            </ul>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+        
+        <!-- Input Area (Sticky Bottom) -->
+        <div class="bg-white border-t border-gray-200 px-2 lg:px-4 py-4 flex-shrink-0">
+            <div class="max-w-3xl mx-auto">
+                <form id="chat-form" class="relative">
+                    {% csrf_token %}
+                    <div class="flex gap-3 items-end">
+                        <textarea id="user-input" rows="1" placeholder="Send a message..."
+                                  class="flex-1 bg-white text-gray-800 border border-gray-300 rounded-xl px-4 py-3 resize-none focus:outline-none focus:ring-2 focus:ring-purple-500"
+                                  style="max-height: 150px;"></textarea>
+                        <button type="submit" id="send-btn"
+                                class="bg-purple-600 hover:bg-purple-700 text-white rounded-xl px-5 py-3">
+                            Send
+                        </button>
+                    </div>
+                </form>
+            </div>
+        </div>
+        
+    </div>
+</div>
+
+<style>
+    /* Custom scrollbar */
+    #messages-container::-webkit-scrollbar {
+        width: 8px;
+    }
+    #messages-container::-webkit-scrollbar-track {
+        background: #f9fafb;
+    }
+    #messages-container::-webkit-scrollbar-thumb {
+        background: #d1d5db;
+        border-radius: 4px;
+    }
+    
+    /* Fade-in animation */
+    @keyframes fadeIn {
+        from { opacity: 0; transform: translateY(10px); }
+        to { opacity: 1; transform: translateY(0); }
+    }
+    .message-fade-in {
+        animation: fadeIn 0.3s ease-out forwards;
+    }
+    
+    /* Thinking dots animation */
+    @keyframes dotPulse {
+        0%, 80%, 100% { transform: scale(0); opacity: 0.5; }
+        40% { transform: scale(1); opacity: 1; }
+    }
+    .thinking-dot:nth-child(1) { animation: dotPulse 1.4s infinite ease-in-out; }
+    .thinking-dot:nth-child(2) { animation: dotPulse 1.4s infinite ease-in-out 0.2s; }
+    .thinking-dot:nth-child(3) { animation: dotPulse 1.4s infinite ease-in-out 0.4s; }
+</style>
+
+<script>
+    // DOM Elements
+    const messagesContainer = document.getElementById('messages-container');
+    const chatForm = document.getElementById('chat-form');
+    const userInput = document.getElementById('user-input');
+    const sendBtn = document.getElementById('send-btn');
+    const csrfToken = document.querySelector('[name=csrfmiddlewaretoken]').value;
+    
+  // Auto-resize textarea as user types
+  userInput.addEventListener('input', function() {
+      this.style.height = 'auto';
+      this.style.height = Math.min(this.scrollHeight, 150) + 'px';
+  });
+  
+  // Handle Enter key (Shift+Enter for new line)
+  userInput.addEventListener('keydown', function(e) {
+      if (e.key === 'Enter' && !e.shiftKey) {
+          e.preventDefault();
+          chatForm.dispatchEvent(new Event('submit'));
+      }
+  });
+  
+  // Handle form submission
+    chatForm.addEventListener('submit', async function(e) {
+        e.preventDefault();
+        const message = userInput.value.trim();
+        if (!message) return;
+        
+        // Disable input while processing
+        sendBtn.disabled = true;
+        userInput.disabled = true;
+        
+        // Add user message to UI
+        addUserMessage(message);
+        userInput.value = '';
+        userInput.style.height = 'auto';
+        
+        // Show "Thinking..." indicator
+        addThinkingIndicator();
+        
+        try {
+            // Send AJAX request
+            const response = await fetch('/api/chatbot/', {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                    'X-CSRFToken': csrfToken
+                },
+                body: JSON.stringify({ message: message })
+            });
+            
+            if (!response.ok) {
+                throw new Error(`HTTP error! status: ${response.status}`);
+            }
+            
+            const data = await response.json();
+            
+            // Remove thinking indicator
+            removeThinkingIndicator();
+            
+            // Add AI response based on type
+            if (data.success) {
+                if (data.type === 'conversation') {
+                    addAIMessage(data.message, 'conversation');
+                } else if (data.type === 'database_view' && data.show_database) {
+                    addAIMessage(data.message, 'database');
+                } else {
+                    addAIMessage(data.message, 'success');
+                }
+            } else {
+                addAIMessage(data.message, 'error');
+            }
+            
+            scrollToBottom();
+            
+        } catch (error) {
+            removeThinkingIndicator();
+            addAIMessage(`Error: ${error.message || 'Could not connect to server'}`, 'error');
+            scrollToBottom();
+        }
+        
+        // Re-enable input
+        sendBtn.disabled = false;
+        userInput.disabled = false;
+        userInput.focus();
+    });
+    
+    /**
+     * Add user message to chat UI
+     */
+    function addUserMessage(message) {
+        const messageDiv = document.createElement('div');
+        messageDiv.className = 'flex gap-4 items-start message-fade-in';
+        messageDiv.innerHTML = `
+            <div class="w-8 h-8 bg-gray-200 rounded-lg flex items-center justify-center flex-shrink-0">
+                <span class="text-gray-700 text-sm">👤</span>
+            </div>
+            <div class="flex-1 bg-gray-100 rounded-2xl px-4 py-3">
+                <p class="text-gray-800">${escapeHtml(message)}</p>
+            </div>
+        `;
+        messagesContainer.querySelector('.space-y-6').appendChild(messageDiv);
+        scrollToBottom();
+    }
+    
+    /**
+     * Add "Thinking..." indicator
+     */
+    function addThinkingIndicator() {
+        const thinkingDiv = document.createElement('div');
+        thinkingDiv.id = 'thinking-indicator';
+        thinkingDiv.className = 'flex gap-4 items-start message-fade-in';
+        thinkingDiv.innerHTML = `
+            <div class="w-8 h-8 bg-gradient-to-br from-purple-500 to-pink-500 rounded-lg flex items-center justify-center flex-shrink-0">
+                <span class="text-white text-sm">🤖</span>
+            </div>
+            <div class="flex-1">
+                <div class="text-gray-500 flex items-center gap-2">
+                    <span>Thinking</span>
+                    <div class="flex gap-1">
+                        <div class="w-2 h-2 bg-gray-400 rounded-full thinking-dot"></div>
+                        <div class="w-2 h-2 bg-gray-400 rounded-full thinking-dot"></div>
+                        <div class="w-2 h-2 bg-gray-400 rounded-full thinking-dot"></div>
+                    </div>
+                </div>
+            </div>
+        `;
+        messagesContainer.querySelector('.space-y-6').appendChild(thinkingDiv);
+        scrollToBottom();
+    }
+    
+    /**
+     * Remove "Thinking..." indicator
+     */
+    function removeThinkingIndicator() {
+        const indicator = document.getElementById('thinking-indicator');
+        if (indicator) indicator.remove();
+    }
+    
+    /**
+     * Add AI response message
+     */
+    function addAIMessage(message, type = 'success') {
+        const messageDiv = document.createElement('div');
+        messageDiv.className = 'flex gap-4 items-start message-fade-in';
+        
+        let bgColor, textColor, icon;
+        
+        if (type === 'error') {
+            bgColor = 'bg-red-50 border border-red-200';
+            textColor = 'text-red-700';
+            icon = '❌';
+        } else if (type === 'conversation') {
+            bgColor = 'bg-blue-50 border border-blue-200';
+            textColor = 'text-blue-800';
+            icon = '💬';
+        } else if (type === 'database') {
+            bgColor = 'bg-green-50 border border-green-200';
+            textColor = 'text-green-800';
+            icon = '📊';
+        } else {
+            bgColor = 'bg-white border border-gray-200';
+            textColor = 'text-gray-800';
+            icon = '✅';
+        }
+        
+        messageDiv.innerHTML = `
+            <div class="w-8 h-8 bg-gradient-to-br from-purple-500 to-pink-500 rounded-lg flex items-center justify-center flex-shrink-0">
+                <span class="text-white text-sm">${icon}</span>
+            </div>
+            <div class="flex-1 ${bgColor} rounded-2xl px-4 py-3">
+                <p class="${textColor} whitespace-pre-line">${escapeHtml(message)}</p>
+            </div>
+        `;
+        messagesContainer.querySelector('.space-y-6').appendChild(messageDiv);
+        scrollToBottom();
+    }
+    
+    /**
+     * Scroll to bottom of messages
+     */
+    function scrollToBottom() {
+        setTimeout(() => {
+            const maxScroll = messagesContainer.scrollHeight - messagesContainer.clientHeight;
+            messagesContainer.scrollTop = maxScroll;
+        }, 100);
+    }
+    
+    /**
+     * Escape HTML to prevent XSS attacks
+     */
+    function escapeHtml(text) {
+        const div = document.createElement('div');
+        div.textContent = text;
+        return div.innerHTML;
+    }
+    
+    /**
+     * Clear chat history from UI and session.
+     */
+    async function clearChat() {
+        if (!confirm('Are you sure you want to clear the chat history?')) return;
+        
+        try {
+            await fetch('/api/clear-chat/', {
+                method: 'POST',
+                headers: {
+                    'X-CSRFToken': csrfToken
+                }
+            });
+            
+            // Clear messages except welcome
+            const container = messagesContainer.querySelector('.space-y-6');
+            const firstMessage = container.firstElementChild;  // Welcome message
+            container.innerHTML = '';
+            container.appendChild(firstMessage);
+            
+            scrollToBottom();
+            
+        } catch (error) {
+            console.error('Error clearing chat:', error);
+            alert('Failed to clear chat history');
+        }
+    }
+    
+    // Focus input on load
+    window.addEventListener('DOMContentLoaded', function() {
+        userInput.focus();
+    });
+</script>
+{% endblock %}
